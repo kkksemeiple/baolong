@@ -1,0 +1,31 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-ssr/
+target/
+*.tsbuildinfo
+*.class
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# 运行时产物（本地上传的图片、日志）
+uploads/
+logs/
+*.log
+
+# 本地环境
+.env.local
+*.local
+
+# 本地 Maven 仓库 / 临时脚本（不参与版本管理）
+.m2repo/
+_tmp/
+
+# 系统文件
+.DS_Store
+Thumbs.db

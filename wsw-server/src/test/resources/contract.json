@@ -1,0 +1,138 @@
+{
+  "AdminOverview": {
+    "fields": [
+      "coinCirculating",
+      "coinDebt",
+      "coinFrozen",
+      "coinIssued",
+      "coinRecycled",
+      "disputeRate",
+      "finishRate",
+      "postCount",
+      "taskCount",
+      "userCount"
+    ],
+    "java": "AdminDto.OverviewVO"
+  },
+  "BargainRecordItem": {
+    "fields": [
+      "amount",
+      "createdAt",
+      "fromNickname",
+      "fromUserId",
+      "id",
+      "status",
+      "statusLabel",
+      "taskId",
+      "toUserId"
+    ],
+    "java": "InteractionDto.BargainVO"
+  },
+  "Conversation": {
+    "fields": [
+      "id",
+      "lastMessage",
+      "lastMessageAt",
+      "peer",
+      "taskId",
+      "taskTitle",
+      "unreadCount"
+    ],
+    "java": "MessageDto.ConversationVO"
+  },
+  "LoginResult": {
+    "fields": [
+      "expiresIn",
+      "token",
+      "user"
+    ],
+    "java": "AuthDto.LoginVO"
+  },
+  "Message": {
+    "fields": [
+      "content",
+      "contentType",
+      "conversationId",
+      "createdAt",
+      "fromAvatar",
+      "fromNickname",
+      "fromUserId",
+      "id",
+      "mine",
+      "readFlag",
+      "toUserId"
+    ],
+    "java": "MessageDto.MessageVO"
+  },
+  "Task": {
+    "fields": [
+      "confirmedAt",
+      "createdAt",
+      "deadline",
+      "description",
+      "durationMinutes",
+      "favorCount",
+      "favorited",
+      "id",
+      "images",
+      "location",
+      "mine",
+      "peopleNeeded",
+      "publisher",
+      "publisherId",
+      "reward",
+      "startTime",
+      "status",
+      "statusLabel",
+      "submitContent",
+      "submitImages",
+      "submittedAt",
+      "tags",
+      "taker",
+      "takerId",
+      "title",
+      "type",
+      "typeLabel",
+      "viewCount"
+    ],
+    "java": "TaskDto.TaskVO"
+  },
+  "TrendPoint": {
+    "fields": [
+      "activeUsers",
+      "claimed",
+      "date",
+      "published"
+    ],
+    "java": "AdminDto.TrendPoint"
+  },
+  "User": {
+    "fields": [
+      "authStatus",
+      "avatar",
+      "createdAt",
+      "creditScore",
+      "finishedCount",
+      "goodRate",
+      "id",
+      "intro",
+      "nickname",
+      "phone",
+      "recommendEnabled",
+      "role",
+      "status",
+      "tags",
+      "username"
+    ],
+    "java": "AuthDto.UserVO"
+  },
+  "UserBrief": {
+    "fields": [
+      "avatar",
+      "creditScore",
+      "id",
+      "nickname"
+    ],
+    "java": "TaskDto.UserBrief"
+  }
+}

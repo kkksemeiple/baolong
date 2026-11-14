@@ -1,0 +1,78 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: wsw-server
+  # 上传限制：Spring Boot 默认单文件只有 1MB，手机截图/照片基本都超，
+  # 会在进 Controller 之前就抛 MaxUploadSizeExceededException（表现为 500）。
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 12MB
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/wsw?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    # ↓↓↓ 数据库账号密码不要写进仓库 ↓↓↓
+    # 启动前设置环境变量 DB_PASSWORD；IDEA 里可在 Run Configuration → Environment variables 添加
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL，上线可改成 org.apache.ibatis.logging.nologging.NoLoggingImpl
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+      update-strategy: not_null
+      insert-strategy: not_null
+
+wsw:
+  jwt:
+    # 生产环境务必换成随机长字符串
+    secret: wsw-baolong-2026-secret-key-please-change-me-0123456789abcdef
+    expire-seconds: 604800
+  business:
+    # 新用户注册赠送屋币
+    init-grant: 100
+    # 单人持有上限
+    max-holding: 100000
+    # 单次发放上限
+    grant-limit: 5000
+    # 待确认自动确认时长（小时）
+    auto-confirm-hours: 72
+    # 违约金
+    penalty-cancel: 5
+    penalty-no-show: 20
+    # 信用分限制接单阈值
+    credit-limit: 80
+    # 新手期保护单量
+    credit-warmup: 20
+    # 统计窗口天数
+    credit-window-days: 90
+
+logging:
+  level:
+    root: info
+    com.baolong.wsw: debug
