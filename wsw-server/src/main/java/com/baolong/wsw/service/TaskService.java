@@ -120,16 +120,18 @@ public class TaskService {
         task.setUpdatedAt(LocalDateTime.now());
         taskMapper.insert(task);
 
-        // 敏感词初筛：命中不阻断发布，只入审核队列（先发后审）
+        // 钱先冻住，任务才算数；余额不足会在这里抛异常，整个事务回滚
+        walletService.freeze(userId, req.reward(), BizType.TASK, task.getId(),
+                task.getTitle(), "TASK", task.getId());
+
+        // 敏感词初筛：命中不阻断发布，只入审核队列（先发后审）。
+        // 必须放在冻结成功之后：audit_item 是 REQUIRES_NEW 独立提交的，
+        // 若先入队再冻结，余额不足导致发布回滚时会留下一条指向不存在任务的孤儿审核记录。
         String hitWord = com.baolong.wsw.algorithm.SensitiveWords.hit(task.getTitle(), task.getDescription());
         if (hitWord != null) {
             auditService.enqueue("TASK", task.getId(), task.getTitle(),
                     task.getDescription(), userId, "敏感词：" + hitWord);
         }
-
-        // 钱先冻住，任务才算数；余额不足会在这里抛异常，整个事务回滚
-        walletService.freeze(userId, req.reward(), BizType.TASK, task.getId(),
-                task.getTitle(), "TASK", task.getId());
 
         return toVO(task, userId);
     }
@@ -175,11 +177,20 @@ public class TaskService {
             task.setDurationMinutes(req.durationMinutes());
         }
         if (req.reward() != null && req.reward() != oldReward) {
-            // 报酬变了，冻结额度要跟着调：先退旧的，再冻新的
+            // 报酬变了，冻结额度要跟着调：先退旧的，再冻新的。
+            //
+            // 这里不能用 originType="TASK" + originId=taskId：
+            // 钱包的幂等键是 transType:originType:originId:userId，
+            // 同一任务第二次改价时 "UNFREEZE:TASK:{taskId}:{userId}" 已经存在，
+            // 第二次解冻会被当成重复请求直接跳过 —— 结果旧冻结没退、又冻了一笔新金额，
+            // 用户账面冻结额越改越多、可用余额却被白扣。
+            // 因此改价用独立的 originType，并把乐观锁版本号拼进 originId，
+            // 保证每次改价是不同的一对（解冻/冻结）流水，同时仍能追溯到任务。
+            long adjustOrigin = taskId * 1_000_000L + (task.getVersion() == null ? 0L : task.getVersion());
             walletService.unfreeze(userId, oldReward, BizType.TASK, taskId,
-                    task.getTitle(), "TASK", taskId);
+                    task.getTitle(), "TASK_EDIT", adjustOrigin);
             walletService.freeze(userId, req.reward(), BizType.TASK, taskId,
-                    task.getTitle(), "TASK", taskId);
+                    task.getTitle(), "TASK_EDIT", adjustOrigin);
             task.setReward(req.reward());
         }
         task.setUpdatedAt(LocalDateTime.now());

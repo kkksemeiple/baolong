@@ -3,15 +3,16 @@
  * 找回密码页（UA-06，迭代三新增）
  *
  * 三步流程：
- * 1. 校验手机号 → 发送一次性验证码（15 分钟有效）
- * 2. 验证码 + 新密码 → 重置
- * 3. 重置成功 → 回到登录页
+ * 1. 校验「登录名 + 注册手机号」是否匹配
+ * 2. 设置新密码
+ * 3. 完成，回登录页
  *
- * 安全要点：
- * - 无论手机号是否注册，第 1 步都返回相同提示（防账号枚举）
- * - 验证码一次性使用，重置成功后该用户所有已登录会话失效（后端处理）
+ * 后端实现说明（与页面必须一致）：
+ * - 本项目没有接短信服务，所以没有真正的验证码，第一步只是校验两项信息是否属于同一账号；
+ * - 后端 /auth/password/forgot 要求 username + phone 两个字段，只传手机号会被参数校验拦下；
+ * - 重置时后端会再次校验，防止有人跳过第一步直接调接口。
  */
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 
@@ -19,22 +20,18 @@ import { authApi } from '@/api'
 
 const router = useRouter()
 
-/** 当前步骤：0 输入手机号 / 1 设置新密码 / 2 完成 */
+/** 当前步骤：0 校验账号 / 1 设置新密码 / 2 完成 */
 const step = ref(0)
 const loading = ref(false)
-/** 发送验证码后的倒计时 */
-const countdown = ref(0)
-let timer: number | undefined
 
-const phoneFormRef = ref<FormInstance>()
+const accountFormRef = ref<FormInstance>()
 const resetFormRef = ref<FormInstance>()
 
-const phoneForm = reactive({ phone: '' })
-const resetForm = reactive({ code: '', newPassword: '', confirmPassword: '' })
+const accountForm = reactive({ username: '', phone: '' })
+const resetForm = reactive({ newPassword: '', confirmPassword: '' })
 
-const isMock = import.meta.env.VITE_USE_MOCK === 'true'
-
-const phoneRules: FormRules = {
+const accountRules: FormRules = {
+  username: [{ required: true, message: '请输入登录名', trigger: 'blur' }],
   phone: [
     { required: true, message: '请输入手机号', trigger: 'blur' },
     { pattern: /^1[3-9]\d{9}$/, message: '手机号格式不正确', trigger: 'blur' },
@@ -42,16 +39,12 @@ const phoneRules: FormRules = {
 }
 
 const resetRules: FormRules = {
-  code: [
-    { required: true, message: '请输入验证码', trigger: 'blur' },
-    { len: 6, message: '验证码为 6 位数字', trigger: 'blur' },
-  ],
   newPassword: [
     { required: true, message: '请设置新密码', trigger: 'blur' },
     {
       validator: (_r, value: string, cb) => {
-        if (!value || value.length < 8 || value.length > 20) {
-          cb(new Error('密码长度为 8-20 位'))
+        if (!value || value.length < 8 || value.length > 32) {
+          cb(new Error('密码长度为 8-32 位'))
           return
         }
         if (!/[a-zA-Z]/.test(value) || !/\d/.test(value)) {
@@ -74,38 +67,23 @@ const resetRules: FormRules = {
   ],
 }
 
-const sendButtonText = computed(() =>
-  countdown.value > 0 ? `${countdown.value} 秒后重发` : '发送验证码',
-)
-
-/** 发送验证码 */
-async function handleSendCode() {
-  if (!phoneFormRef.value) return
-  const valid = await phoneFormRef.value.validate().catch(() => false)
+/** 第一步：校验登录名与手机号是否匹配 */
+async function handleVerify() {
+  if (!accountFormRef.value) return
+  const valid = await accountFormRef.value.validate().catch(() => false)
   if (!valid) return
 
   loading.value = true
   try {
-    await authApi.sendResetCode(phoneForm.phone)
-    ElMessage.success('若该手机号已注册，验证码已发送')
-
-    // 进入倒计时，防止频繁请求
-    countdown.value = 60
-    timer = window.setInterval(() => {
-      countdown.value -= 1
-      if (countdown.value <= 0 && timer) {
-        window.clearInterval(timer)
-        timer = undefined
-      }
-    }, 1000)
-
+    await authApi.verifyResetAccount(accountForm.username.trim(), accountForm.phone)
+    ElMessage.success('账号校验通过，请设置新密码')
     step.value = 1
   } finally {
     loading.value = false
   }
 }
 
-/** 提交重置 */
+/** 第二步：提交重置 */
 async function handleReset() {
   if (!resetFormRef.value) return
   const valid = await resetFormRef.value.validate().catch(() => false)
@@ -114,8 +92,8 @@ async function handleReset() {
   loading.value = true
   try {
     await authApi.resetPassword({
-      phone: phoneForm.phone,
-      code: resetForm.code,
+      username: accountForm.username.trim(),
+      phone: accountForm.phone,
       newPassword: resetForm.newPassword,
     })
     step.value = 2
@@ -130,32 +108,43 @@ async function handleReset() {
     <main class="form-panel">
       <div class="form-box">
         <h2 class="form-title">找回密码</h2>
-        <p class="form-sub">通过注册手机号重置登录密码</p>
+        <p class="form-sub">用注册时填的登录名和手机号重置密码</p>
 
         <el-steps :active="step" align-center finish-status="success" class="steps">
-          <el-step title="验证手机号" />
+          <el-step title="校验账号" />
           <el-step title="设置新密码" />
           <el-step title="完成" />
         </el-steps>
 
-        <!-- 第一步：手机号 -->
+        <!-- 第一步：登录名 + 手机号 -->
         <el-form
           v-if="step === 0"
-          ref="phoneFormRef"
-          :model="phoneForm"
-          :rules="phoneRules"
+          ref="accountFormRef"
+          :model="accountForm"
+          :rules="accountRules"
           label-position="top"
           size="large"
         >
-          <el-form-item label="注册手机号" prop="phone">
-            <el-input v-model="phoneForm.phone" placeholder="请输入注册时填写的手机号" clearable />
+          <el-form-item label="登录名" prop="username">
+            <el-input v-model="accountForm.username" placeholder="注册时填的登录名" clearable />
           </el-form-item>
-          <el-button type="primary" class="submit" :loading="loading" @click="handleSendCode">
+
+          <el-form-item label="注册手机号" prop="phone">
+            <el-input
+              v-model="accountForm.phone"
+              placeholder="注册时填写的手机号"
+              maxlength="11"
+              clearable
+              @keyup.enter="handleVerify"
+            />
+          </el-form-item>
+
+          <el-button type="primary" class="submit" :loading="loading" @click="handleVerify">
             下一步
           </el-button>
         </el-form>
 
-        <!-- 第二步：验证码 + 新密码 -->
+        <!-- 第二步：新密码 -->
         <el-form
           v-else-if="step === 1"
           ref="resetFormRef"
@@ -164,20 +153,19 @@ async function handleReset() {
           label-position="top"
           size="large"
         >
-          <el-form-item label="验证码" prop="code">
-            <div class="code-row">
-              <el-input v-model="resetForm.code" placeholder="6 位验证码" maxlength="6" />
-              <el-button :disabled="countdown > 0 || loading" @click="handleSendCode">
-                {{ sendButtonText }}
-              </el-button>
-            </div>
-          </el-form-item>
+          <el-alert
+            :title="`正在重置账号 ${accountForm.username}，请设置新密码`"
+            type="info"
+            :closable="false"
+            show-icon
+            class="mb-16"
+          />
 
           <el-form-item label="新密码" prop="newPassword">
             <el-input
               v-model="resetForm.newPassword"
               type="password"
-              placeholder="8-20 位，含字母和数字"
+              placeholder="8-32 位，含字母和数字"
               show-password
             />
           </el-form-item>
@@ -191,15 +179,6 @@ async function handleReset() {
               @keyup.enter="handleReset"
             />
           </el-form-item>
-
-          <el-alert
-            v-if="isMock"
-            type="info"
-            :closable="false"
-            show-icon
-            title="演示模式：验证码固定为 123456"
-            class="mb-16"
-          />
 
           <el-button type="primary" class="submit" :loading="loading" @click="handleReset">
             重置密码
@@ -259,12 +238,6 @@ async function handleReset() {
 
 .steps {
   margin-bottom: 28px;
-}
-
-.code-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
 }
 
 .submit {

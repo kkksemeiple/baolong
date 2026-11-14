@@ -139,6 +139,12 @@ onMounted(load)
         </template>
       </el-table-column>
 
+      <el-table-column label="手机号" width="130" align="center">
+        <template #default="{ row }">
+          <span class="phone-text">{{ row.phone || '—' }}</span>
+        </template>
+      </el-table-column>
+
       <el-table-column prop="creditScore" label="信用分" width="90" align="center" />
 
       <el-table-column label="状态" width="90" align="center">
@@ -278,6 +284,12 @@ onMounted(load)
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+
+.phone-text {
+  font-size: 13px;
+  color: #606266;
+  font-variant-numeric: tabular-nums;
 }
 
 .text-muted {

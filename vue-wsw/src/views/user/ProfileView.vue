@@ -83,6 +83,9 @@ onMounted(() => {
             <StatusTag :value="userStore.user.status" kind="user" size="small" />
           </div>
           <p class="username">@{{ userStore.user.username }}</p>
+          <p class="meta-line">
+            <span class="meta-item">手机号：{{ userStore.user.phone || '未填写' }}</span>
+          </p>
           <p class="intro">{{ userStore.user.intro || '这个人很懒，什么都没写' }}</p>
           <div class="tags">
             <el-tag v-for="t in userStore.user.tags" :key="t" size="small" effect="plain">
@@ -220,6 +223,16 @@ onMounted(() => {
   margin: 4px 0 8px;
   font-size: 13px;
   color: #909399;
+}
+
+.meta-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.meta-item + .meta-item {
+  margin-left: 16px;
 }
 
 .intro {

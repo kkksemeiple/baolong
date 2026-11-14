@@ -311,7 +311,9 @@ public class AuthService {
                 user.getRole(),
                 user.getNickname(),
                 user.getAvatar(),
-                maskPhone(user.getPhone()),
+                // 本人视角返回完整手机号（个人中心要能看到注册时用的号码）；
+                // 他人主页由 UserCenterService.profile 负责打码。
+                user.getPhone(),
                 score,
                 user.getStatus(),
                 user.getAuthStatus(),

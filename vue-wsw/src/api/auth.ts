@@ -62,19 +62,20 @@ export function fetchCurrentUser() {
 }
 
 /**
- * 忘记密码 —— 发送重置令牌（UA-06）
- * 后端校验手机号是否已注册，通过短信发送 6 位验证码或一次性令牌。
- * 无论手机号是否注册，接口都返回相同提示，避免账号枚举。
+ * 忘记密码 —— 第一步：校验「登录名 + 注册手机号」是否匹配（UA-06）
+ *
+ * 本项目没有接短信服务，所以没有真正的验证码：
+ * 后端只做匹配校验，返回打码后的手机号，真正的重置在下一步完成。
  */
-export function sendResetCode(phone: string) {
-  return post<{ expireIn: number }>('/auth/password/forgot', { phone })
+export function verifyResetAccount(username: string, phone: string) {
+  return post<{ phone: string; message: string }>('/auth/password/forgot', { username, phone })
 }
 
 /**
  * 重置密码（UA-06）
- * 令牌一次性有效，15 分钟内可用；成功后该用户所有已签发凭证立即失效。
+ * 后端会再次校验登录名与手机号，通过后改密并让该用户所有已签发凭证失效。
  */
-export function resetPassword(data: { phone: string; code: string; newPassword: string }) {
+export function resetPassword(data: { username: string; phone: string; newPassword: string }) {
   return post<void>('/auth/password/reset', data)
 }
 

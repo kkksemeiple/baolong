@@ -121,6 +121,23 @@ public interface TaskMapper extends BaseMapper<Task> {
     int adminTakeDown(@Param("taskId") Long taskId, @Param("reason") String reason);
 
     /**
+     * 接单方超时未交付，系统自动关闭任务（只允许 IN_PROGRESS）。
+     * <p>与 adminTakeDown 分开：这条是定时任务用的，语义是「接单方违约导致关闭」，
+     * 状态守卫收到 IN_PROGRESS，避免把刚提交待确认（TO_CONFIRM）的任务误判关闭。
+     */
+    @Update("""
+            UPDATE task
+               SET status        = 'CANCELLED',
+                   closed_at     = NOW(),
+                   cancel_reason = #{reason},
+                   version       = version + 1,
+                   updated_at    = NOW()
+             WHERE id = #{taskId}
+               AND status = 'IN_PROGRESS'
+            """)
+    int timeoutClose(@Param("taskId") Long taskId, @Param("reason") String reason);
+
+    /**
      * 承接人放弃：任务<b>退回待接取</b>，清掉接单人，报酬继续冻结。
      *
      * <p>这是迁移表之外唯一允许的回退：放弃是接单方单方面的行为，

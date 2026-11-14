@@ -58,8 +58,9 @@ public class TaskMaintenanceJob {
         try {
             int expired = expireOverdue();
             int confirmed = autoConfirm();
-            if (expired > 0 || confirmed > 0) {
-                log.info("定时任务完成：过期 {} 条，自动确认 {} 条", expired, confirmed);
+            int timedOut = timeoutInProgress();
+            if (expired > 0 || confirmed > 0 || timedOut > 0) {
+                log.info("定时任务完成：过期 {} 条，自动确认 {} 条，超时关闭 {} 条", expired, confirmed, timedOut);
             }
         } catch (Exception e) {
             log.error("定时任务执行失败", e);
@@ -103,11 +104,21 @@ public class TaskMaintenanceJob {
                 if (task == null || !TaskStatus.TO_CONFIRM.name().equals(task.getStatus())) {
                     continue;
                 }
+                // 必须先把任务从 TO_CONFIRM 推到 COMPLETED 并检查影响行数。
+                // 原来的写法是直接 settle，而 settle 的守卫是 status='COMPLETED'，
+                // 待确认状态根本更新不到 0 行以外的东西 —— 结果钱划走了、任务却永远停在「待确认」，
+                // 发布人之后还能手动点确认，再赔一次（自动结算与手动结算用的是两套幂等键，防不住）。
+                if (taskMapper.confirm(task.getId(), task.getPublisherId()) == 0) {
+                    continue;
+                }
+                if (taskMapper.settle(task.getId()) == 0) {
+                    log.warn("自动结算未能置为已结算，跳过: taskId={}", task.getId());
+                    continue;
+                }
                 walletService.consumeFrozen(task.getPublisherId(), task.getReward());
                 walletService.income(claim.getClaimerId(), task.getReward(), BizType.TASK,
                         task.getId(), "任务自动结算：" + task.getTitle(), "AUTO_CONFIRM", claim.getId());
                 taskClaimMapper.confirm(task.getId(), null, "超时自动确认");
-                taskMapper.settle(task.getId());
                 creditService.refresh(claim.getClaimerId());
                 creditService.refresh(task.getPublisherId());
                 notificationService.pushTask(claim.getClaimerId(), "任务已自动结算",
@@ -115,6 +126,57 @@ public class TaskMaintenanceJob {
                 count++;
             } catch (Exception e) {
                 log.warn("自动确认失败: claimId={}", claim.getId(), e);
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 接单方超时未交付：任务已过截止时间、状态仍是「进行中」。
+     *
+     * <p>之前只有「待接取过期」和「待确认自动结算」两条兜底，
+     * 缺了这条：接单方接了不做、发布人也不主动取消时，
+     * 任务会永远停在进行中，报酬一直冻结在发布人账上，
+     * 双方的钱和任务都卡死（实测中已出现）。
+     *
+     * <p>宽限期取 {@code claimTimeoutHours}（默认 24 小时），
+     * 超时后：关闭任务 → 报酬退回发布人 → 接单记录按「接单方责任」作废（计入取消率）→ 通知双方。
+     */
+    private int timeoutInProgress() {
+        int hours = configService.getInt("claimTimeoutHours", 24);
+        LocalDateTime threshold = LocalDateTime.now().minusHours(hours);
+        List<Task> tasks = taskMapper.selectList(Wrappers.<Task>lambdaQuery()
+                .eq(Task::getStatus, TaskStatus.IN_PROGRESS.name())
+                .lt(Task::getDeadline, threshold)
+                .last("LIMIT " + BATCH));
+        int count = 0;
+        for (Task task : tasks) {
+            try {
+                Long claimantId = task.getClaimantId();
+                String reason = "超过截止时间 " + hours + " 小时仍未提交，系统自动关闭";
+                if (taskMapper.timeoutClose(task.getId(), reason) == 0) {
+                    continue;
+                }
+                taskClaimMapper.cancel(task.getId(), reason, "CLAIMER");
+                walletService.unfreeze(task.getPublisherId(), task.getReward(), BizType.TASK,
+                        task.getId(), "任务超时关闭退回：" + task.getTitle(), "TASK_TIMEOUT", task.getId());
+                if (task.getPublisherId() != null) {
+                    creditService.refresh(task.getPublisherId());
+                }
+                if (claimantId != null) {
+                    creditService.refresh(claimantId);
+                }
+                notificationService.pushTask(task.getPublisherId(), "任务已超时关闭",
+                        "「" + task.getTitle() + "」接单方超过截止时间 " + hours + " 小时未提交，任务已关闭，报酬已退回钱包",
+                        task.getId());
+                if (claimantId != null) {
+                    notificationService.pushTask(claimantId, "任务超时被关闭",
+                            "「" + task.getTitle() + "」你未在截止时间后 " + hours + " 小时内提交，任务已被系统关闭，本次计入放弃",
+                            task.getId());
+                }
+                count++;
+            } catch (Exception e) {
+                log.warn("任务超时关闭失败: taskId={}", task.getId(), e);
             }
         }
         return count;
