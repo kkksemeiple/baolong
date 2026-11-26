@@ -368,10 +368,6 @@ onMounted(load)
             <div class="fact-value">{{ typeMeta?.label }}</div>
           </div>
           <div class="fact">
-            <div class="fact-label">人数需求</div>
-            <div class="fact-value">{{ task.peopleNeeded }} 人</div>
-          </div>
-          <div class="fact">
             <div class="fact-label">剩余时间</div>
             <div class="fact-value" :class="{ urgent: left?.urgent }">{{ left?.text }}</div>
           </div>
@@ -652,7 +648,8 @@ onMounted(load)
 
 .facts {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 报酬 / 类型 / 剩余时间 —— 去掉「人数需求」后剩 3 列 */
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-top: 20px;
   padding: 16px;

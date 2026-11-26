@@ -294,7 +294,6 @@ export interface TaskCreateParams {
   reward: number
   deadline: string
   location: string
-  peopleNeeded?: number
   images?: string[]
 }
 

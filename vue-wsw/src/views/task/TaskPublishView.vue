@@ -31,7 +31,6 @@ const form = reactive({
   reward: 10,
   deadline: new Date(Date.now() + 24 * 3600_000).toISOString(),
   location: '',
-  peopleNeeded: 1,
 })
 
 const rules: FormRules = {
@@ -112,7 +111,6 @@ async function handleSubmit() {
       reward: form.reward,
       deadline: new Date(form.deadline).toISOString(),
       location: form.location,
-      peopleNeeded: form.peopleNeeded,
     })
     ElMessage.success(`发布成功，已冻结 ${form.reward} WB`)
     router.replace(`/tasks/${created.id}`)
@@ -166,11 +164,6 @@ loadWallet()
               <el-select v-model="form.type" class="w-full">
                 <el-option v-for="o in typeOptions" :key="o.value" :label="o.label" :value="o.value" />
               </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12">
-            <el-form-item label="人数需求">
-              <el-input-number v-model="form.peopleNeeded" :min="1" :max="10" class="w-full" />
             </el-form-item>
           </el-col>
         </el-row>
