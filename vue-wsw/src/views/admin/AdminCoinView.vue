@@ -184,6 +184,7 @@ const CONFIG_NUMBER_KEYS = [
   'maxHolding',
   'grantLimit',
   'autoConfirmHours',
+  'claimTimeoutHours',
   'penaltyCancel',
   'penaltyNoShow',
 ] as const
@@ -449,6 +450,13 @@ onMounted(() => {
             <el-input-number v-model="config.autoConfirmHours" :min="1" :max="168" class="w-full" />
           </el-form-item>
 
+          <el-form-item label="接单超时自动关闭（小时）">
+            <el-input-number v-model="config.claimTimeoutHours" :min="1" :max="168" class="w-full" />
+            <div class="config-tip">
+              任务过了截止时间、接单方仍未提交，再等多久就自动关闭并退回报酬
+            </div>
+          </el-form-item>
+
           <el-form-item label="违约金-额度外取消（WB）">
             <el-input-number v-model="config.penaltyCancel" :min="0" :max="100" class="w-full" />
           </el-form-item>
@@ -499,6 +507,13 @@ onMounted(() => {
 
 .w-full {
   width: 100%;
+}
+
+.config-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 
 .danger {

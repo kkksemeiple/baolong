@@ -139,11 +139,13 @@ public class TaskMaintenanceJob {
      * 任务会永远停在进行中，报酬一直冻结在发布人账上，
      * 双方的钱和任务都卡死（实测中已出现）。
      *
-     * <p>宽限期取 {@code claimTimeoutHours}（默认 24 小时），
+     * <p>宽限期取 {@code claimTimeoutHours}（默认 2 小时，可在后台改）。
+     * 留缓冲是为了别让「卡在最后一分钟提交」被判死刑，但也不能拖太久 ——
+     * 拖一天的话，发布人看着一条「已截止但还在进行中」的任务无从处理。
      * 超时后：关闭任务 → 报酬退回发布人 → 接单记录按「接单方责任」作废（计入取消率）→ 通知双方。
      */
     private int timeoutInProgress() {
-        int hours = configService.getInt("claimTimeoutHours", 24);
+        int hours = configService.getInt("claimTimeoutHours", 2);
         LocalDateTime threshold = LocalDateTime.now().minusHours(hours);
         List<Task> tasks = taskMapper.selectList(Wrappers.<Task>lambdaQuery()
                 .eq(Task::getStatus, TaskStatus.IN_PROGRESS.name())

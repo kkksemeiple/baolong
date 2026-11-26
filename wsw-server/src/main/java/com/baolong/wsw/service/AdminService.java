@@ -910,7 +910,7 @@ public class AdminService {
     /** 允许管理员在后台改的配置项白名单（防止前端乱传把库写脏） */
     private static final java.util.Set<String> EDITABLE_CONFIG = java.util.Set.of(
             "initGrant", "maxHolding", "grantLimit",
-            "autoConfirmHours", "penaltyCancel", "penaltyNoShow");
+            "autoConfirmHours", "claimTimeoutHours", "penaltyCancel", "penaltyNoShow");
 
     /**
      * 批量保存配置。

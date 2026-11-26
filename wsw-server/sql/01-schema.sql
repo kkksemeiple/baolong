@@ -492,6 +492,7 @@ VALUES ('initGrant', '100', '新用户注册赠送屋币'),
        ('maxHolding', '100000', '单人持有上限'),
        ('grantLimit', '5000', '单次发放上限'),
        ('autoConfirmHours', '72', '待确认自动确认时长（小时）'),
+       ('claimTimeoutHours', '2', '接单后超截止时间多久仍无提交则自动关闭（小时）'),
        ('penaltyCancel', '5', '违约金-无责取消额度外'),
        ('penaltyNoShow', '20', '违约金-爽约')
 ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);

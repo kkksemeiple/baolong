@@ -662,6 +662,8 @@ export interface SystemConfig {
   grantLimit: number
   /** 自动确认时长（小时） */
   autoConfirmHours: number
+  /** 接单后超截止时间多久仍无提交则自动关闭（小时） */
+  claimTimeoutHours: number
   /** 违约金-无责取消额度外 */
   penaltyCancel: number
   /** 违约金-爽约 */

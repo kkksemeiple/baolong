@@ -248,8 +248,14 @@ async function doReject() {
 /* ---------------- 取消任务 ---------------- */
 async function doCancel() {
   if (!task.value) return
+  // 已接单且已过截止时间里，发布人属于「对方超时、我主动收回」，提示要说清楚；
+  // 取消记录记在发布人名下，所以不会算接单方的违约。
+  const overtime = task.value.status === 'TAKEN' && expired.value
+  const message = overtime
+    ? '该任务已过截止时间但接单方还没提交。取消后报酬会全额退回，且本次取消不计入接单方的违约记录。确定取消吗？'
+    : '取消后冻结的报酬会全额退回，确定取消吗？'
   try {
-    await ElMessageBox.confirm('取消后冻结的报酬会全额退回，确定取消吗？', '取消任务', {
+    await ElMessageBox.confirm(message, overtime ? '取消超时任务' : '取消任务', {
       type: 'warning',
     })
     await taskApi.cancelTask(task.value.id)
@@ -494,6 +500,10 @@ onMounted(load)
           <!-- 委托方 -->
           <template v-else-if="isPublisher">
             <el-button v-if="task.status === 'OPEN'" @click="doCancel">取消任务</el-button>
+            <!-- 已接单但过了截止时间：发布人不能一直干等，给一个主动收回的出口 -->
+            <el-button v-if="task.status === 'TAKEN' && expired" @click="doCancel">
+              取消任务（对方超时）
+            </el-button>
             <el-button v-if="['TAKEN', 'SUBMITTED'].includes(task.status)" @click="openChat">
               联系接单方
             </el-button>
@@ -514,12 +524,20 @@ onMounted(load)
 
         <!-- 委托方自看提示 -->
         <el-alert
-          v-if="isPublisher && task.status === 'TAKEN'"
+          v-if="isPublisher && task.status === 'TAKEN' && !expired"
           class="mt-16"
           type="info"
           :closable="false"
           show-icon
           title="接单方正在履约中，完成后会通知你确认。"
+        />
+        <el-alert
+          v-if="isPublisher && task.status === 'TAKEN' && expired"
+          class="mt-16"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="已过截止时间，接单方仍未提交。你可以继续等，也可以点「取消任务」收回报酬；超时满宽限期后系统会自动关闭并退回。"
         />
       </el-card>
     </template>

@@ -22,6 +22,21 @@ public class ConfigService {
 
     private final SystemConfigMapper configMapper;
 
+    /**
+     * 各配置项的出厂值。
+     * <p>用途有两个：读的时候库里没有就用它；管理端「参数配置」页拉取时也用它兜底，
+     * 否则新增的配置项（比如 claimTimeoutHours）在旧库里还没那一行，
+     * 前端会收到缺少的 key、渲染成 0，看起来像坏掉了。
+     */
+    private static final Map<String, String> DEFAULTS = Map.of(
+            "initGrant", "100",
+            "maxHolding", "100000",
+            "grantLimit", "5000",
+            "autoConfirmHours", "72",
+            "claimTimeoutHours", "2",
+            "penaltyCancel", "5",
+            "penaltyNoShow", "20");
+
     public String get(String key, String defaultValue) {
         SystemConfig config = configMapper.selectById(key);
         return config == null || config.getValue() == null ? defaultValue : config.getValue();
@@ -45,6 +60,8 @@ public class ConfigService {
         for (SystemConfig c : list) {
             map.put(c.getCfgKey(), c.getValue());
         }
+        // 库里还没落行的配置项用出厂值补上，管理端页面才不会显示成 0
+        DEFAULTS.forEach(map::putIfAbsent);
         return map;
     }
 
