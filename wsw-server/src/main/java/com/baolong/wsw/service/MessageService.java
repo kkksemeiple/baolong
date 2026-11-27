@@ -71,6 +71,13 @@ public class MessageService {
         if (task == null) {
             throw BizException.notFound("任务不存在");
         }
+        // 只有任务的双方能拉会话。否则任何一个登录用户只要知道任务 id，
+        // 就能和任意发布人建立会话并私聊 —— 这是骚扰与垃圾信息的入口。
+        boolean party = task.getPublisherId().equals(userId)
+                || (task.getClaimantId() != null && task.getClaimantId().equals(userId));
+        if (!party) {
+            throw BizException.forbidden("只有任务相关方才能发起会话");
+        }
         Long peerId = task.getPublisherId().equals(userId) ? task.getClaimantId() : task.getPublisherId();
         if (peerId == null) {
             throw BizException.badRequest("任务还没有接单方，暂时无法聊天");

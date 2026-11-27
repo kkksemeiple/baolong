@@ -23,6 +23,7 @@ import com.baolong.wsw.mapper.UserMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -119,7 +120,12 @@ public class UserCenterService {
             user.setRecommendEnabled(req.recommendEnabled());
         }
         user.setUpdatedAt(LocalDateTime.now());
-        userMapper.updateById(user);
+        try {
+            userMapper.updateById(user);
+        } catch (DuplicateKeyException e) {
+            // 改手机号时同样有「查重通过、写入时被别人抢走」的窗口，靠唯一索引兜底
+            throw BizException.conflict("该手机号已被其他账号绑定");
+        }
         return profile(userId, userId);
     }
 

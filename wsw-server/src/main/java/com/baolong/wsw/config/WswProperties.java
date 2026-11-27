@@ -17,8 +17,11 @@ public class WswProperties {
 
     @Data
     public static class Jwt {
-        /** 签名密钥 */
-        private String secret = "wsw-default-secret";
+        /**
+         * 签名密钥。默认留空 = 启动时由 {@code JwtUtil} 生成随机密钥并落盘，
+         * 部署环境请通过环境变量 WSW_JWT_SECRET 注入。
+         */
+        private String secret = "";
         /** 有效期（秒） */
         private long expireSeconds = 604800;
     }

@@ -50,8 +50,11 @@ mybatis-plus:
 
 wsw:
   jwt:
-    # 生产环境务必换成随机长字符串
-    secret: wsw-baolong-2026-secret-key-please-change-me-0123456789abcdef
+    # 签发 token 的签名密钥。
+    # 绝对不要把真实密钥写进仓库：本仓库是公开的，任何拿到源码的人都能用它伪造任意账号（含管理员）。
+    # 留空则启动时自动生成 64 位随机密钥并保存到 .wsw/jwt-secret（已加入 .gitignore，且不在静态资源目录下）。
+    # 部署到服务器时请设置环境变量 WSW_JWT_SECRET，否则删掉 .wsw 目录会让所有人重新登录。
+    secret: ${WSW_JWT_SECRET:}
     expire-seconds: 604800
   business:
     # 新用户注册赠送屋币

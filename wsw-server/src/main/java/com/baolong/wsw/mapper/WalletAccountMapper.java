@@ -91,4 +91,22 @@ public interface WalletAccountMapper extends BaseMapper<WalletAccount> {
                AND debt >= #{amt}
             """)
     int reduceDebt(@Param("userId") Long userId, @Param("amt") long amt);
+
+    /**
+     * 一次性扣款：可用余额够就全扣，不够则扣光并把差额挂成欠款。
+     *
+     * <p>为什么必须一条 SQL：以前是先查余额、再 deduct、再 addDebt 三步，
+     * 中间被并发花掉时会出现「钱没扣、欠款却记了」或者「扣了、欠款没记」，
+     * 恒等式 {@code available - debt = Σ流水} 直接对不上。
+     * 放在一条 UPDATE 里，数据库保证读和写在同一个原子操作内完成。
+     */
+    @Update("""
+            UPDATE wallet_account
+               SET available = available - LEAST(available, #{amt}),
+                   debt      = debt + (#{amt} - LEAST(available, #{amt})),
+                   version   = version + 1,
+                   updated_at = NOW()
+             WHERE user_id = #{userId}
+            """)
+    int chargeOff(@Param("userId") Long userId, @Param("amt") long amt);
 }

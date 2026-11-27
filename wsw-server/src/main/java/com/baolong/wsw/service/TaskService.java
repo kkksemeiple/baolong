@@ -14,6 +14,7 @@ import com.baolong.wsw.entity.TaskClaim;
 import com.baolong.wsw.entity.User;
 import com.baolong.wsw.entity.UserCredit;
 import com.baolong.wsw.enums.BizType;
+import com.baolong.wsw.enums.ClaimStatus;
 import com.baolong.wsw.enums.FavTargetType;
 import com.baolong.wsw.enums.TaskStatus;
 import com.baolong.wsw.enums.TaskType;
@@ -359,6 +360,16 @@ public class TaskService {
         if (rows == 0) {
             throw BizException.of(ResultCode.TASK_STATUS_INVALID);
         }
+        // 幂等键里要放「这一次接单」的 id，而不是任务 id：
+        // 否则同一个任务被同一个接单方放弃第二次（退回大厅后又被接、又放弃）时，
+        // 违约金与补偿都会被当成重复请求跳过 —— 白放弃不罚钱。
+        TaskClaim activeClaim = claimMapper.selectOne(Wrappers.<TaskClaim>lambdaQuery()
+                .eq(TaskClaim::getTaskId, taskId)
+                .ne(TaskClaim::getStatus, ClaimStatus.CANCELLED.name())
+                .orderByDesc(TaskClaim::getId)
+                .last("LIMIT 1"));
+        long originId = activeClaim != null && activeClaim.getId() != null
+                ? activeClaim.getId() : taskId;
         claimMapper.cancel(taskId, reason, BY_CLAIMER);
         // 注意：这里**不解冻**。任务是退回大厅等别人接，报酬还得继续冻结着，
         // 否则发布人可能把钱花掉，等下一个接单方完成时没钱可付。
@@ -367,9 +378,9 @@ public class TaskService {
         long penalty = configService.getLong("penaltyNoShow", 20);
         if (penalty > 0) {
             walletService.penalty(userId, penalty, BizType.TASK, taskId,
-                    "放弃任务违约金", "TASK", taskId);
+                    "放弃任务违约金", "ABANDON", originId);
             walletService.income(task.getPublisherId(), penalty, BizType.TASK, taskId,
-                    "放弃任务违约金补偿", "PENALTY", taskId);
+                    "放弃任务违约金补偿", "ABANDON", originId);
         }
         creditService.refresh(userId);
         notificationService.pushTask(task.getPublisherId(), "接单方放弃了任务",
@@ -666,6 +677,12 @@ public class TaskService {
             TaskDto.UserBrief publisher = brief(task.getPublisherId(), users, credits);
             TaskDto.UserBrief taker = brief(task.getClaimantId(), users, credits);
             TaskClaim claim = claims.get(task.getId());
+            // 交付说明与凭证只给任务双方看：
+            // GET /tasks/{id} 对游客开放，若不过滤，任何人都能看到别人任务的
+            // 取件截图 / 小票 / 送达照片（这些往往带手机号、地址、订单号）。
+            boolean canSeeDelivery = currentUserId != null
+                    && (currentUserId.equals(task.getPublisherId())
+                    || currentUserId.equals(task.getClaimantId()));
             String internalStatus = task.getStatus();
             TaskStatus statusEnum = safeStatus(internalStatus);
             TaskType typeEnum = parseType(task.getType());
@@ -699,8 +716,9 @@ public class TaskService {
                     readTags(task.getTags()),
                     task.getViewCount(),
                     task.getFavorCount(),
-                    claim == null ? null : claim.getSubmitContent(),
-                    claim == null ? Collections.emptyList() : readJson(claim.getSubmitProof())));
+                    claim == null || !canSeeDelivery ? null : claim.getSubmitContent(),
+                    claim == null || !canSeeDelivery
+                            ? Collections.emptyList() : readJson(claim.getSubmitProof())));
         }
         return result;
     }

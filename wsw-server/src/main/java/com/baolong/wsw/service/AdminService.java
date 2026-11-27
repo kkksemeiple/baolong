@@ -46,6 +46,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 管理后台服务：概览、用户、内容审核、举报、争议、任务、发币、配置、日志。
@@ -56,6 +57,9 @@ import java.util.Objects;
 @Service
 @RequiredArgsConstructor
 public class AdminService {
+
+    /** 发币用的唯一序号，拼在幂等键里，保证每次发放都是一次新流水 */
+    private static final AtomicLong ISSUE_SEQ = new AtomicLong();
 
     private final UserMapper userMapper;
     private final UserCreditMapper userCreditMapper;
@@ -93,7 +97,10 @@ public class AdminService {
         long coinIssued = walletTransactionMapper.sumAbsByType(TransType.GRANT.name())
                 + walletTransactionMapper.sumPositiveByType(TransType.REVERSAL.name());
         long penaltyTotal = walletTransactionMapper.sumAbsByType(TransType.PENALTY.name());
-        long penaltyCompensated = walletTransactionMapper.sumIncomeByOrigin("PENALTY");
+        // 罚款补偿的 originType 有两种：旧数据是 PENALTY，现在的放弃流程是 ABANDON，
+        // 两种都要扣掉，否则做过一次放弃后看板就凭空多出这笔「回收」。
+        long penaltyCompensated = walletTransactionMapper.sumIncomeByOrigin("PENALTY")
+                + walletTransactionMapper.sumIncomeByOrigin("ABANDON");
         long coinRecycled = Math.max(0, penaltyTotal - penaltyCompensated)
                 + walletTransactionMapper.sumNegativeAbsByType(TransType.REVERSAL.name());
 
@@ -485,20 +492,33 @@ public class AdminService {
 
         switch (verdict) {
             case "TAKER" -> {
-                walletService.consumeFrozen(publisherId, frozen);
-                walletService.income(takerId, frozen, com.baolong.wsw.enums.BizType.DISPUTE,
-                        task.getId(), "争议裁决所得：" + task.getTitle(), "DISPUTE", dispute.getId());
-                requireResolved(task.getId(), TaskStatus.SETTLED.name(), remark);
+                if (takerId == null) {
+                    // 数据异常：没有接单方就没有「判给接单方」，退回发布人更安全，别把钱吞掉
+                    walletService.unfreeze(publisherId, frozen, com.baolong.wsw.enums.BizType.DISPUTE,
+                            task.getId(), "争议裁决退回：" + task.getTitle(), "DISPUTE", dispute.getId());
+                    requireResolved(task.getId(), TaskStatus.CANCELLED.name(), remark);
+                } else {
+                    walletService.consumeFrozen(publisherId, frozen);
+                    walletService.income(takerId, frozen, com.baolong.wsw.enums.BizType.DISPUTE,
+                            task.getId(), "争议裁决所得：" + task.getTitle(), "DISPUTE", dispute.getId());
+                    requireResolved(task.getId(), TaskStatus.SETTLED.name(), remark);
+                }
             }
             case "PARTIAL" -> {
-                long half = frozen / 2;
-                long rest = frozen - half;
-                walletService.unfreeze(publisherId, rest, com.baolong.wsw.enums.BizType.DISPUTE,
-                        task.getId(), "争议部分退回：" + task.getTitle(), "DISPUTE", dispute.getId());
-                walletService.consumeFrozen(publisherId, half);
-                walletService.income(takerId, half, com.baolong.wsw.enums.BizType.DISPUTE,
-                        task.getId(), "争议部分补偿：" + task.getTitle(), "DISPUTE", dispute.getId());
-                requireResolved(task.getId(), TaskStatus.SETTLED.name(), remark);
+                if (takerId == null) {
+                    walletService.unfreeze(publisherId, frozen, com.baolong.wsw.enums.BizType.DISPUTE,
+                            task.getId(), "争议裁决退回：" + task.getTitle(), "DISPUTE", dispute.getId());
+                    requireResolved(task.getId(), TaskStatus.CANCELLED.name(), remark);
+                } else {
+                    long half = frozen / 2;
+                    long rest = frozen - half;
+                    walletService.unfreeze(publisherId, rest, com.baolong.wsw.enums.BizType.DISPUTE,
+                            task.getId(), "争议部分退回：" + task.getTitle(), "DISPUTE", dispute.getId());
+                    walletService.consumeFrozen(publisherId, half);
+                    walletService.income(takerId, half, com.baolong.wsw.enums.BizType.DISPUTE,
+                            task.getId(), "争议部分补偿：" + task.getTitle(), "DISPUTE", dispute.getId());
+                    requireResolved(task.getId(), TaskStatus.SETTLED.name(), remark);
+                }
             }
             default -> {
                 // PUBLISHER / INSUFFICIENT：钱退回发布人，任务终止
@@ -704,8 +724,14 @@ public class AdminService {
     @Transactional(rollbackFor = Exception.class)
     public void issueCoins(Long adminId, Long userId, long amount, String remark) {
         requireUser(userId);
+        // 幂等键是 transType:originType:originId:userId。
+        // 以前这里固定用 adminId 当 originId —— 同一个管理员第二次给同一个人发币时，
+        // 流水被当成「重复请求」直接跳过，但 opLog 和通知照发，用户被告知到账却没钱。
+        // 每次发币生成一个唯一序号即可。
+        long originId = System.currentTimeMillis() * 1000
+                + ISSUE_SEQ.incrementAndGet() % 1000;
         walletService.grant(userId, amount, com.baolong.wsw.enums.BizType.ADMIN, userId,
-                "管理员发币", "ADMIN_ISSUE", adminId);
+                "管理员发币", "ADMIN_ISSUE", originId);
         opLog(adminId, "ISSUE_COINS", "user:" + userId, amount + " 屋币 " + Objects.toString(remark, ""));
         notificationService.pushFund(userId, "收到管理员发放的屋币", amount + " 屋币已到账", null);
     }
@@ -770,6 +796,14 @@ public class AdminService {
         }
         if (TransType.REVERSAL.name().equals(origin.getTransType())) {
             throw BizException.conflict("冲正流水本身不能再被冲正");
+        }
+        // 冻结 / 解冻不是「收支」，而是同一个账户内部 available 与 frozen 的搬家。
+        // 把 FREEZE(-10) 冲成 +10 会让可用余额涨回去、frozen 仍占着，
+        // 之后任务结算时冻结额不足 → 与「结算只 warn」叠在一起就是凭空印钱。
+        // 这类账必须走任务流程（取消 / 过期 / 裁决）而不是冲正。
+        if (TransType.FREEZE.name().equals(origin.getTransType())
+                || TransType.UNFREEZE.name().equals(origin.getTransType())) {
+            throw BizException.conflict("冻结/解冻流水是账务镜像，不支持冲正；请通过任务流程处理");
         }
         Long reversed = walletTransactionMapper.selectCount(
                 Wrappers.<WalletTransaction>lambdaQuery()

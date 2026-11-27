@@ -75,6 +75,16 @@ password: ${DB_PASSWORD:}
   $env:DB_PASSWORD="你的密码"     # PowerShell
   ```
 
+JWT 签名密钥同理，用环境变量 `WSW_JWT_SECRET`（32 位以上随机串）：
+
+```bash
+$env:WSW_JWT_SECRET="换成你自己的随机串"
+```
+
+不设置也能跑：首次启动会自动生成一份随机密钥存到 `wsw-server/.wsw/jwt-secret`
+（该目录已在 `.gitignore` 里，不会进仓库；也刻意不放在 `uploads/`，因为那是静态直出目录）。
+但**部署到服务器时必须显式配置**，否则删掉 `.wsw` 目录会让所有用户掉线重新登录。
+
 ### 3. 启动后端
 
 ```bash

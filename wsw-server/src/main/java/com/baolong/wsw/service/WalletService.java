@@ -137,8 +137,10 @@ public class WalletService {
         }
         int rows = accountMapper.unfreeze(userId, amount);
         if (rows == 0) {
-            log.warn("解冻失败，冻结余额不足: user={}, amount={}", userId, amount);
-            return;
+            // 冻结额不够说明账目已经不一致（例如冻结被重复消费）。
+            // 以前这里只打 warn 就返回，结果是「任务取消了但钱没退」，必须让调用方失败回滚。
+            log.error("解冻失败，冻结余额不足: user={}, amount={}", userId, amount);
+            throw BizException.conflict("冻结余额不足，无法退回（数据异常，请联系管理员核对账目）");
         }
         record(userId, TransType.UNFREEZE, bizType, bizId, title, amount, originType, originId,
                 "解冻退回 " + amount + " 屋币");
@@ -170,7 +172,10 @@ public class WalletService {
         }
         int rows = accountMapper.consumeFrozen(userId, amount);
         if (rows == 0) {
-            log.warn("释放冻结失败，冻结余额不足: user={}, amount={}", userId, amount);
+            // 关键：0 行意味着委托方冻结额不够了。以前只打 warn 继续往下走，
+            // 调用方随后照样 income 给接单方 —— 等于凭空印钱。必须抛出让事务回滚。
+            log.error("释放冻结失败，冻结余额不足: user={}, amount={}", userId, amount);
+            throw BizException.conflict("冻结余额不足，无法完成结算（数据异常，请联系管理员核对账目）");
         }
     }
 
@@ -185,17 +190,13 @@ public class WalletService {
             return;
         }
         WalletAccount account = requireAccount(userId);
+        // 一条原子 UPDATE 完成「先扣可用、不足挂欠款」，
+        // 避免中间被并发花掉导致 available 与 debt 各自记一半。
         long available = account.getAvailable() == null ? 0 : account.getAvailable();
-        if (available >= amount) {
-            accountMapper.deductAvailable(userId, amount);
-        } else {
-            if (available > 0) {
-                accountMapper.deductAvailable(userId, available);
-            }
-            long debt = amount - available;
-            accountMapper.addDebt(userId, debt);
-            log.info("违约金不足，挂欠款: user={}, debt={}", userId, debt);
+        if (available < amount) {
+            log.info("违约金不足，余额 {} / 应扣 {}，差额挂欠款", available, amount);
         }
+        accountMapper.chargeOff(userId, amount);
         record(userId, TransType.PENALTY, bizType, bizId, title, -amount, originType, originId,
                 "违约扣罚 " + amount + " 屋币");
     }
@@ -210,17 +211,8 @@ public class WalletService {
         if (amount > 0) {
             accountMapper.addAvailable(userId, amount);
         } else {
-            long abs = -amount;
-            WalletAccount account = requireAccount(userId);
-            long available = account.getAvailable() == null ? 0 : account.getAvailable();
-            if (available >= abs) {
-                accountMapper.deductAvailable(userId, abs);
-            } else {
-                if (available > 0) {
-                    accountMapper.deductAvailable(userId, available);
-                }
-                accountMapper.addDebt(userId, abs - available);
-            }
+            // 与违约金同一套：扣得动多少扣多少，差额挂欠款，且整件事是一条原子 UPDATE
+            accountMapper.chargeOff(userId, -amount);
         }
         record(userId, TransType.REVERSAL, bizType, bizId, title, amount, originType, originId, remark);
     }

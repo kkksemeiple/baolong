@@ -19,6 +19,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,10 +27,14 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +48,16 @@ import java.util.stream.Collectors;
 public class AuthService {
 
     private static final BCryptPasswordEncoder ENCODER = new BCryptPasswordEncoder();
+
+    /**
+     * 失败次数滑动窗口（进程内）。登录与找回密码都靠它限速：
+     * 不加限制的话，密码可以被无限次猜；更糟的是「登录名 + 手机号」就能改密码，
+     * 手机号是 11 位数字、可枚举，等于给了一条离线爆破账号的捷径。
+     */
+    private static final int MAX_FAILS = 5;
+    private static final long FAIL_WINDOW_MS = 10 * 60 * 1000L;
+    /** 静态：非静态 final 字段会被 Lombok 的 @RequiredArgsConstructor 当成依赖注入 */
+    private static final Map<String, Deque<Long>> FAILURES = new ConcurrentHashMap<>();
 
     private final UserMapper userMapper;
     private final UserCreditMapper userCreditMapper;
@@ -84,7 +99,13 @@ public class AuthService {
         user.setRecommendEnabled(Boolean.TRUE);
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            // 两个请求同时通过上面的查重（查重和插入之间有窗口），
+            // 真正拦住重复的是数据库唯一索引；这里把它翻译成人话，别让用户看到 500。
+            throw BizException.conflict("登录名或手机号已被占用");
+        }
 
         // 钱包 + 信用档案
         WalletAccount wallet = walletService.getOrCreate(user.getId());
@@ -113,9 +134,12 @@ public class AuthService {
 
     @Transactional(rollbackFor = Exception.class)
     public AuthDto.LoginVO login(AuthDto.LoginReq req, String ip, String userAgent) {
+        String account = req.username() == null ? "" : req.username().trim();
+        ensureNotThrottled(account);
         User user = userMapper.selectOne(
-                Wrappers.<User>lambdaQuery().eq(User::getUsername, req.username().trim()));
+                Wrappers.<User>lambdaQuery().eq(User::getUsername, account));
         if (user == null || !ENCODER.matches(req.password(), user.getPasswordHash())) {
+            recordFailure(account);
             writeLoginLog(user == null ? null : user.getId(), false, ip, userAgent);
             throw BizException.of(ResultCode.UNAUTHORIZED, "账号或密码不正确");
         }
@@ -123,6 +147,7 @@ public class AuthService {
             writeLoginLog(user.getId(), false, ip, userAgent);
             throw BizException.forbidden("账号已被封禁，请联系管理员");
         }
+        clearFailures(account);
 
         user.setLastActiveAt(LocalDateTime.now());
         userMapper.updateById(user);
@@ -160,30 +185,69 @@ public class AuthService {
      * 返回脱敏手机号让前端展示，真正的重置在 {@link #resetPassword} 里完成。
      */
     public String forgotPassword(AuthDto.ForgotReq req) {
+        String account = req.username() == null ? "" : req.username().trim();
+        ensureNotThrottled(account);
         User user = userMapper.selectOne(
-                Wrappers.<User>lambdaQuery().eq(User::getUsername, req.username().trim()));
+                Wrappers.<User>lambdaQuery().eq(User::getUsername, account));
         if (user == null) {
+            recordFailure(account);
             throw BizException.notFound("账号不存在");
         }
         if (user.getPhone() == null || !user.getPhone().equals(req.phone())) {
+            recordFailure(account);
             throw BizException.badRequest("手机号与账号不匹配");
         }
+        clearFailures(account);
         return maskPhone(user.getPhone());
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void resetPassword(AuthDto.ResetReq req) {
+        String account = req.username() == null ? "" : req.username().trim();
+        ensureNotThrottled(account);
         User user = userMapper.selectOne(
-                Wrappers.<User>lambdaQuery().eq(User::getUsername, req.username().trim()));
+                Wrappers.<User>lambdaQuery().eq(User::getUsername, account));
         if (user == null) {
+            recordFailure(account);
             throw BizException.notFound("账号不存在");
         }
         if (user.getPhone() == null || !user.getPhone().equals(req.phone())) {
+            recordFailure(account);
             throw BizException.badRequest("手机号与账号不匹配");
         }
+        clearFailures(account);
         user.setPasswordHash(ENCODER.encode(req.newPassword()));
         user.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(user);
+    }
+
+    // ------------------------------------------------------------------ 限速
+
+    private void ensureNotThrottled(String account) {
+        Deque<Long> records = FAILURES.get(account);
+        if (records == null) {
+            return;
+        }
+        long since = System.currentTimeMillis() - FAIL_WINDOW_MS;
+        synchronized (records) {
+            while (!records.isEmpty() && records.peekFirst() < since) {
+                records.pollFirst();
+            }
+            if (records.size() >= MAX_FAILS) {
+                throw BizException.badRequest("尝试次数过多，请 10 分钟后再试");
+            }
+        }
+    }
+
+    private void recordFailure(String account) {
+        Deque<Long> records = FAILURES.computeIfAbsent(account, k -> new ArrayDeque<>());
+        synchronized (records) {
+            records.addLast(System.currentTimeMillis());
+        }
+    }
+
+    private void clearFailures(String account) {
+        FAILURES.remove(account);
     }
 
     // ------------------------------------------------------------------ 实名认证

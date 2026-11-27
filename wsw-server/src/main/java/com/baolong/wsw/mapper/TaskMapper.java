@@ -157,6 +157,26 @@ public interface TaskMapper extends BaseMapper<Task> {
             """)
     int reopen(@Param("taskId") Long taskId, @Param("claimantId") Long claimantId);
 
+    /**
+     * 只改报酬（议价成交时用），<b>带状态守卫</b>。
+     *
+     * <p>不能拿查出来的实体整行 {@code updateById} 回写：那会把快照里的
+     * {@code status='WAITING'} 一起写回去，万一同一个瞬间有人抢单成功，
+     * 已接的单就被"复活"回待接取状态。影响 0 行说明任务已经不在待接取，调用方要抛错。
+     */
+    @Update("""
+            UPDATE task
+               SET reward     = #{reward},
+                   version    = version + 1,
+                   updated_at = NOW()
+             WHERE id = #{taskId}
+               AND publisher_id = #{publisherId}
+               AND status = 'WAITING'
+            """)
+    int updateReward(@Param("taskId") Long taskId,
+                     @Param("publisherId") Long publisherId,
+                     @Param("reward") Long reward);
+
     /** 承接人放弃 → 已取消（历史语义，保留给管理员/特殊流程使用） */
     @Update("""
             UPDATE task

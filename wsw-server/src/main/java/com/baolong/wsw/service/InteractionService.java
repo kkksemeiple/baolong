@@ -8,6 +8,7 @@ import com.baolong.wsw.entity.Report;
 import com.baolong.wsw.entity.Task;
 import com.baolong.wsw.entity.AuditItem;
 import com.baolong.wsw.enums.BargainStatus;
+import com.baolong.wsw.enums.BizType;
 import com.baolong.wsw.enums.ReportType;
 import com.baolong.wsw.enums.TaskStatus;
 import com.baolong.wsw.mapper.AuditItemMapper;
@@ -48,6 +49,7 @@ public class InteractionService {
     private final AuditItemMapper auditItemMapper;
     private final UserMapper userMapper;
     private final NotificationService notificationService;
+    private final WalletService walletService;
 
     // ------------------------------------------------------------------ 议价
 
@@ -106,16 +108,31 @@ public class InteractionService {
         bargainRecordMapper.updateById(record);
 
         if (accept) {
-            // 成交价替换任务报酬：先释放旧冻结，再按新价冻结
+            // 成交价替换任务报酬。
+            // 这里不能用 updateById 整行回写：task 是刚才查出来的快照，status 还是 WAITING，
+            // 万一同一个瞬间有人抢单（UPDATE ... WHERE status='WAITING' 成功把状态改成 IN_PROGRESS），
+            // 整行回写会把 IN_PROGRESS 覆盖回 WAITING —— 已接的单被"复活"在大厅里。
+            // 所以只更新 reward，并且带上状态守卫。
+            if (taskMapper.updateReward(taskId, publisherId, record.getAmount()) == 0) {
+                throw BizException.conflict("任务状态已变更，无法接受报价，请刷新后重试");
+            }
+            // 差额必须真的动钱：成交价高于原报酬要补冻，低于则退回。
+            // 以前这里只打了一行日志，结果是「按新价结算、但只冻了旧价」，
+            // 结算时冻结不足，等于凭空给接单方印钱。
             long delta = record.getAmount() - task.getReward();
-            task.setReward(record.getAmount());
-            task.setUpdatedAt(LocalDateTime.now());
-            taskMapper.updateById(task);
             if (delta > 0) {
-                log.info("议价成交价高于原报酬，差额 {} 需发布人补足", delta);
+                walletService.freeze(publisherId, delta, BizType.TASK, taskId,
+                        "议价成交补冻：" + task.getTitle(), "BARGAIN", record.getId());
+            } else if (delta < 0) {
+                walletService.unfreeze(publisherId, -delta, BizType.TASK, taskId,
+                        "议价成交退回差额：" + task.getTitle(), "BARGAIN", record.getId());
             }
             notificationService.pushTask(record.getFromUserId(), "报价已被接受",
                     "任务「" + task.getTitle() + "」以 " + record.getAmount() + " 屋币成交", taskId);
+            // 成交后其余还在排队的报价立即作废：
+            // 否则发布人还能再点一次「同意」，把成交价改成另一个人的报价、
+            // 并按新差额再冻一笔钱。
+            bargainRecordMapper.invalidatePending(taskId);
         } else {
             notificationService.pushTask(record.getFromUserId(), "报价被拒绝",
                     "任务「" + task.getTitle() + "」的报价未被接受", taskId);

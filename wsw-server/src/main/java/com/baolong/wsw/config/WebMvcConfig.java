@@ -21,12 +21,15 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // 本项目的鉴权靠 Authorization 头，不靠 Cookie，
+        // 所以不需要 allowCredentials。开着它 + 通配来源等于让任意站点都能携带凭证读响应，
+        // 是典型 CORS 误配，收益为零、风险白送。
         registry.addMapping("/**")
                 .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .exposedHeaders("Authorization")
-                .allowCredentials(true)
+                .allowCredentials(false)
                 .maxAge(3600);
     }
 

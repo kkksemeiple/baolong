@@ -1,5 +1,9 @@
 package com.baolong.wsw.security;
 
+import com.baolong.wsw.entity.User;
+import com.baolong.wsw.enums.UserRole;
+import com.baolong.wsw.enums.UserStatus;
+import com.baolong.wsw.mapper.UserMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +27,7 @@ import java.util.regex.Pattern;
 public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
+    private final UserMapper userMapper;
 
     /** 游客可访问的 GET 接口（任务大厅、帖子列表、他人主页等） */
     private static final Pattern[] ANONYMOUS_GET = {
@@ -64,8 +69,23 @@ public class AuthInterceptor implements HandlerInterceptor {
                 : null;
 
         LoginUser user = jwtUtil.parse(token);
+        String dbRole = null;
         if (user != null) {
-            AuthContext.set(user);
+            // JWT 是无状态的：token 一旦签发，在有效期内就一直能通过签名校验。
+            // 所以「封禁 / 注销 / 撤管理员」都必须在这里回查一次数据库，
+            // 否则被踢的人还能用旧 token 一直操作到 7 天后过期 —— 封禁、降权都形同虚设。
+            User account = userMapper.selectById(user.getId());
+            if (account == null) {
+                return reject(response, 401, 40101, "账号不存在或已注销，请重新登录");
+            }
+            if (UserStatus.BANNED.name().equals(account.getStatus())) {
+                return reject(response, 401, 40101, "账号已被封禁，请联系管理员");
+            }
+            // 注意：LIMITED（信誉不足限制接单）是正常可用账号，不能拦。
+            dbRole = account.getRole();
+            // 写进上下文的角色必须是「库里此刻的角色」，不能沿用 token 里的旧值：
+            // 否则被降权的管理员，在别的业务代码里仍是管理员。
+            AuthContext.set(new LoginUser(user.getId(), account.getUsername(), dbRole));
         }
 
         String path = request.getRequestURI();
@@ -82,7 +102,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             return reject(response, 401, 40100, "请先登录");
         }
 
-        if (path.startsWith("/admin") && !user.isAdmin()) {
+        // 用库里的角色判权限，而不是 token 里那份快照：
+        // 管理员被降权后，旧 token 里的 role 仍然是 ADMIN，只看 token 等于永不失效。
+        boolean admin = UserRole.ADMIN.name().equals(dbRole) || UserRole.SADMIN.name().equals(dbRole);
+        if (path.startsWith("/admin") && !admin) {
             return reject(response, 403, 40300, "没有权限访问管理后台");
         }
         return true;
