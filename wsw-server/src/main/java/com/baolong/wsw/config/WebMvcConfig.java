@@ -3,6 +3,7 @@ package com.baolong.wsw.config;
 import com.baolong.wsw.security.AuthInterceptor;
 import com.baolong.wsw.security.IdempotentInterceptor;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -12,6 +13,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 /**
  * Web 层配置：跨域、拦截器、上传文件静态映射。
  */
+@Slf4j
 @Configuration
 @RequiredArgsConstructor
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -46,8 +48,18 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // 上传的图片通过 /files/upload/{文件名} 直接访问
+        // 上传的图片通过 /files/upload/{文件名} 直接访问。
+        // 目录是「工作目录 + uploads」，也就是说 —— 换一个目录启动，就换了一个图库。
+        // 所以这里把绝对路径打印出来并顺手建好目录：
+        // 图片 404 时，第一件事就是看日志里这个路径和数据库里记录的 URL 对不对得上。
+        String dir = System.getProperty("user.dir") + java.io.File.separator + "uploads";
+        try {
+            java.nio.file.Files.createDirectories(java.nio.file.Path.of(dir));
+        } catch (Exception e) {
+            log.warn("创建上传目录失败: {} ({})", dir, e.getMessage());
+        }
+        log.info("静态资源目录（图片访问根）: {}", dir);
         registry.addResourceHandler("/files/upload/**")
-                .addResourceLocations("file:" + System.getProperty("user.dir") + "/uploads/");
+                .addResourceLocations("file:" + dir + "/");
     }
 }
