@@ -242,12 +242,22 @@ public class TaskService {
             throw explainClaimFailure(taskId);
         }
 
-        TaskClaim claim = new TaskClaim();
-        claim.setTaskId(taskId);
-        claim.setClaimerId(userId);
-        claim.setStatus("IN_PROGRESS");
-        claim.setClaimedAt(LocalDateTime.now());
-        claimMapper.insert(claim);
+        // 放弃过的任务会退回大厅重新被接：此时 task_claim 里已经有一行 CANCELLED 记录，
+        // 而 uk_task_id 保证「一个任务只有一行」。所以第二次接单不能再 insert，
+        // 必须把旧行重置为新的进行中记录 —— 否则撞唯一键，接口直接 500。
+        TaskClaim existing = claimMapper.selectOne(
+                Wrappers.<TaskClaim>lambdaQuery().eq(TaskClaim::getTaskId, taskId));
+        if (existing == null) {
+            TaskClaim claim = new TaskClaim();
+            claim.setTaskId(taskId);
+            claim.setClaimerId(userId);
+            claim.setStatus("IN_PROGRESS");
+            claim.setClaimedAt(LocalDateTime.now());
+            claimMapper.insert(claim);
+        } else if (claimMapper.reopenForClaim(taskId, userId) == 0) {
+            // 旧记录不是 CANCELLED（正常流程不会出现），回滚本次抢单，避免状态错乱
+            throw BizException.conflict("接单记录状态异常，请刷新后重试");
+        }
 
         notificationService.pushTask(task.getPublisherId(), "有人接了你的任务",
                 "「" + task.getTitle() + "」已被接单，请留意后续进度", taskId);

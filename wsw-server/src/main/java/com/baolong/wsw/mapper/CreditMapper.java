@@ -20,11 +20,19 @@ public interface CreditMapper {
      * 90 天滚动窗口内的接单统计。
      * <p>「发布人责任导致的取消不计入分母」——{@code cancel_by='PUBLISHER'} 的记录整体排除，
      * 既不进 total，也不进 cancelled。
+     *
+     * <p><b>状态值必须用内核词汇 {@code COMPLETED}</b>：数据库里存的是 COMPLETED，
+     * {@code FINISHED} 只是 {@code TaskWire} 给前端看的翻译词。写成 FINISHED 会让完成数恒为 0，
+     * 完成率随之为 0；有效单量达到 20 后平滑权重变为 1，分数固定掉到 78（LIMITED），
+     * 用户会同时失去接单与发布资格。
+     *
+     * <p>on_time 仍然限定 COMPLETED：它是 {@code onTimeClaims / finishedClaims} 的分子，
+     * 必须严格是完成单的子集，否则比率会大于 1。
      */
     @Select("""
             SELECT COUNT(*)                                                                   AS total,
-                   COALESCE(SUM(CASE WHEN c.status = 'FINISHED' THEN 1 ELSE 0 END), 0)        AS finished,
-                   COALESCE(SUM(CASE WHEN c.status = 'FINISHED'
+                   COALESCE(SUM(CASE WHEN c.status = 'COMPLETED' THEN 1 ELSE 0 END), 0)       AS finished,
+                   COALESCE(SUM(CASE WHEN c.status = 'COMPLETED'
                                       AND c.submitted_at IS NOT NULL
                                       AND c.submitted_at <= t.deadline THEN 1 ELSE 0 END), 0) AS on_time,
                    COALESCE(SUM(CASE WHEN c.status = 'CANCELLED'
