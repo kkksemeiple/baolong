@@ -228,6 +228,14 @@ public class ForumService {
         replyMapper.insert(reply);
         postMapper.incrReply(postId, 1);
 
+        // 回帖也要过敏感词：以前只查了主帖，用户把「代考/包过」写进回帖就绕过了审核队列。
+        // 先发后审：不阻断发布，命中就先塞进待审内容，由管理员处理。
+        String hitWord = com.baolong.wsw.algorithm.SensitiveWords.hit(req.content());
+        if (hitWord != null) {
+            auditService.enqueue("REPLY", reply.getId(), "帖子「" + post.getTitle() + "」的回帖",
+                    req.content(), userId, "命中敏感词：" + hitWord);
+        }
+
         // 通知：被回复的人（不是自己）+ 楼主（也不是自己、且不是同一个被回复人）
         if (parent != null && !parent.getAuthorId().equals(userId)) {
             notificationService.push(parent.getAuthorId(), com.baolong.wsw.enums.NotifType.FORUM,
