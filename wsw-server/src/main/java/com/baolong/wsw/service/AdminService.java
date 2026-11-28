@@ -724,6 +724,15 @@ public class AdminService {
     @Transactional(rollbackFor = Exception.class)
     public void issueCoins(Long adminId, Long userId, long amount, String remark) {
         requireUser(userId);
+        // 单次发放上限：这条配置原来只写在 yml 里、后台也能改，
+        // 但代码从来没读过 —— 填多少发多少，配置形同虚设。
+        long limit = configService.getLong("grantLimit", 5_000);
+        if (amount <= 0) {
+            throw BizException.badRequest("发放金额必须大于 0");
+        }
+        if (amount > limit) {
+            throw BizException.badRequest("单次发放不能超过 " + limit + " 屋币");
+        }
         // 幂等键是 transType:originType:originId:userId。
         // 以前这里固定用 adminId 当 originId —— 同一个管理员第二次给同一个人发币时，
         // 流水被当成「重复请求」直接跳过，但 opLog 和通知照发，用户被告知到账却没钱。

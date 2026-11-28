@@ -59,6 +59,13 @@ public class AuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws IOException {
+        // 进任何请求之前先清空线程上下文。
+        // ThreadLocal 是复用的：上一个请求如果在本拦截器里被拒（比如普通用户访问 /admin 返回 403），
+        // Spring 不会为「返回 false 的那个拦截器」回调 afterCompletion，身份就残留在池化线程上。
+        // 下一个落到同一线程的请求（比如游客看任务详情）会把这个残留身份当成自己 ——
+        // 表现为「游客看到别人的 mine/favorited、浏览记录记到别人头上」这种诡异串号。
+        AuthContext.clear();
+
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
@@ -83,6 +90,13 @@ public class AuthInterceptor implements HandlerInterceptor {
             }
             // 注意：LIMITED（信誉不足限制接单）是正常可用账号，不能拦。
             dbRole = account.getRole();
+            // 密码指纹比对：改过密码的旧 token 必须立刻失效。
+            // （页面上明确写了「修改密码后，所有设备上的登录状态都会失效」，
+            //   不做这一步就是纯文案骗人 —— JWT 本身不会因为改密码而失效。）
+            String expectPv = JwtUtil.fingerprint(account.getPasswordHash());
+            if (expectPv != null && !expectPv.equals(user.getPv())) {
+                return reject(response, 401, 40101, "密码已修改，请重新登录");
+            }
             // 写进上下文的角色必须是「库里此刻的角色」，不能沿用 token 里的旧值：
             // 否则被降权的管理员，在别的业务代码里仍是管理员。
             AuthContext.set(new LoginUser(user.getId(), account.getUsername(), dbRole));

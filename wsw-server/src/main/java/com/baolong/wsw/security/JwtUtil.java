@@ -90,18 +90,41 @@ public class JwtUtil {
         return Keys.hmacShaKeyFor(properties.getJwt().getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 签发 token */
-    public String create(Long userId, String username, String role) {
+    /** 签发 token（带密码指纹：改密码后旧 token 自动失效） */
+    public String create(Long userId, String username, String role, String pv) {
         Instant now = Instant.now();
         Instant exp = now.plusSeconds(properties.getJwt().getExpireSeconds());
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .claim("role", role)
+                .claim("pv", pv)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(exp))
                 .signWith(key())
                 .compact();
+    }
+
+    /**
+     * 密码指纹：对 BCrypt 哈希取 SHA-256 后截前 12 位十六进制。
+     * 不直接用哈希本身当 claim，是因为 token 是 Base64 明文可读的，
+     * 把密码哈希塞进去等于把哈希泄露给任何抓到 token 的人。
+     */
+    public static String fingerprint(String passwordHash) {
+        if (passwordHash == null || passwordHash.isBlank()) {
+            return null;
+        }
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(passwordHash.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 6; i++) {
+                sb.append(String.format("%02x", digest[i]));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     /** 解析 token，非法或过期返回 null */
@@ -118,7 +141,8 @@ public class JwtUtil {
             return new LoginUser(
                     Long.valueOf(claims.getSubject()),
                     claims.get("username", String.class),
-                    claims.get("role", String.class));
+                    claims.get("role", String.class),
+                    claims.get("pv", String.class));
         } catch (JwtException | IllegalArgumentException e) {
             return null;
         }

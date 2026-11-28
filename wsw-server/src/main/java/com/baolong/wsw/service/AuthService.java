@@ -357,7 +357,10 @@ public class AuthService {
     // ------------------------------------------------------------------ 内部
 
     private AuthDto.LoginVO issueToken(User user) {
-        String token = jwtUtil.create(user.getId(), user.getUsername(), user.getRole());
+        // 把密码指纹写进 token：用户一改密码，旧 token 的指纹就对不上，
+        // 拦截器会判 401 —— 这才真的兑现「改密码后所有设备下线」这句提示。
+        String token = jwtUtil.create(user.getId(), user.getUsername(), user.getRole(),
+                com.baolong.wsw.security.JwtUtil.fingerprint(user.getPasswordHash()));
         return new AuthDto.LoginVO(token, properties.getJwt().getExpireSeconds(), toVO(user));
     }
 
