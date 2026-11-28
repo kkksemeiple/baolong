@@ -34,8 +34,11 @@ public class InteractionController {
     @PostMapping("/tasks/{id}/bargain")
     public Result<BargainRecord> bargain(@PathVariable Long id,
                                          @RequestBody InteractionDto.BargainReq req) {
-        int amount = req.amount() == null ? 0 : req.amount();
-        return Result.ok(interactionService.offer(id, AuthContext.requireUserId(), amount, req.message()));
+        if (req.amount() == null) {
+            throw com.baolong.wsw.common.BizException.badRequest("请填写报价金额");
+        }
+        return Result.ok(interactionService.offer(id, AuthContext.requireUserId(),
+                req.amount(), req.message()));
     }
 
     /** 发布人接受 / 拒绝报价 */

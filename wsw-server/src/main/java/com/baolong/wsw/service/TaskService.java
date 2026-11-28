@@ -157,6 +157,11 @@ public class TaskService {
             task.setType(parseType(req.type()).name());
         }
         if (req.deadline() != null) {
+            // 改截止时间也必须是「将来的时间」：否则任务一保存就过期，
+            // 大厅查不到、却还占着冻结额度，等定时任务下一轮才清掉。
+            if (!req.deadline().isAfter(LocalDateTime.now())) {
+                throw BizException.badRequest("截止时间必须晚于当前时间");
+            }
             task.setDeadline(req.deadline());
         }
         if (req.location() != null) {
@@ -195,7 +200,12 @@ public class TaskService {
             task.setReward(req.reward());
         }
         task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
+        // 必须判影响行数：Task 带 @Version，乐观锁会在 SQL 里追加 AND version = 旧值。
+        // 如果这期间有人抢单（version 被 +1），这里会更新 0 行 ——
+        // 而上面已经把钱「解冻 + 重新冻结」完了，不报错就是「钱动了、单据没动」的脏账。
+        if (taskMapper.updateById(task) == 0) {
+            throw BizException.conflict("任务已被他人修改或已被接单，无法保存修改，请刷新后重试");
+        }
         return toVO(task, userId);
     }
 

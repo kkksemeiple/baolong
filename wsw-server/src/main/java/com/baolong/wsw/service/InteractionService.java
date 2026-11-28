@@ -63,9 +63,11 @@ public class InteractionService {
             throw BizException.of(ResultCode.TASK_STATUS_INVALID, "任务已不在待接单状态");
         }
         long ceil = (long) Math.floor(task.getReward() * BARGAIN_CEIL_RATIO);
-        if (amount < 0 || amount > ceil) {
+        // 下限必须是 1：允许报 0 会出现「成交价 0 元」的任务，
+        // 结算时 income(0) 直接 return，接单方白干、账也看不出来。
+        if (amount < 1 || amount > ceil) {
             throw BizException.of(ResultCode.BARGAIN_NOT_ALLOWED,
-                    "报价需在 0 ~ " + ceil + " 屋币之间");
+                    "报价需在 1 ~ " + ceil + " 屋币之间");
         }
 
         // 同一任务同一时刻至多一条 PENDING
@@ -212,15 +214,40 @@ public class InteractionService {
 
     private void submitReport(Long taskId, Long postId, String targetTitle, Long authorId,
                               Long reporterId, String type, String reason, String evidence) {
-        String reportType = type == null ? ReportType.OTHER.name() : type.toUpperCase();
+        // 入参收口：type 必须在枚举内（否则后台列表会显示一串怪值），
+        // reason/evidence 要卡住长度 —— 列是 VARCHAR(500)/VARCHAR(1000)，
+        // 超长会变成 500 数据库异常，用户只看到「服务器开小差了」。
+        String reportType = type == null ? ReportType.OTHER.name() : type.trim().toUpperCase();
+        boolean known = false;
+        for (ReportType t : ReportType.values()) {
+            if (t.name().equals(reportType)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            reportType = ReportType.OTHER.name();
+        }
+        String text = reason == null ? "" : reason.trim();
+        if (text.isEmpty()) {
+            throw BizException.badRequest("请填写举报理由");
+        }
+        if (text.length() > 400) {
+            throw BizException.badRequest("举报理由最多 400 字");
+        }
+        String proof = evidence == null ? null : evidence.trim();
+        if (proof != null && proof.length() > 900) {
+            throw BizException.badRequest("证据说明最多 900 字");
+        }
+
         Report report = new Report();
         report.setType(reportType);
         report.setTaskId(taskId);
         report.setPostId(postId);
         report.setTargetTitle(targetTitle);
         report.setReporterId(reporterId);
-        report.setReason(reason);
-        report.setEvidence(evidence);
+        report.setReason(text);
+        report.setEvidence(proof);
         report.setStatus("PENDING");
         report.setCreatedAt(LocalDateTime.now());
         reportMapper.insert(report);

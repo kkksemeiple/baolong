@@ -113,6 +113,7 @@ public final class TaskDto {
             @NotNull(message = "截止时间不能为空")
             LocalDateTime deadline,
 
+            @Size(max = 100, message = "地点最多 100 字")
             String location,
 
             Integer peopleNeeded,
@@ -134,9 +135,10 @@ public final class TaskDto {
             @Size(max = 60, message = "标题最多 60 字") String title,
             @Size(max = 2000, message = "描述最多 2000 字") String description,
             String type,
-            Long reward,
+            // 改价也要守住下限：否则传 0/负数，后面冻结时才会报错，错误信息对用户不友好
+            @DecimalMin(value = "1", message = "报酬至少 1 屋币") Long reward,
             LocalDateTime deadline,
-            String location,
+            @Size(max = 100, message = "地点最多 100 字") String location,
             Integer peopleNeeded,
             List<String> images,
             LocalDateTime startTime,
