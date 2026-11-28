@@ -276,6 +276,11 @@ public class TaskService {
         if (!task.getPublisherId().equals(userId)) {
             throw BizException.forbidden("只有发布人才能确认完成");
         }
+        // 评价必须落在 1~5：这个值会直接进信誉分（评价占 25% 权重），
+        // 不校验的话，随便传个 999 或 -10 就能把人刷成满分或打到冻结。
+        if (req != null && req.rating() != null && (req.rating() < 1 || req.rating() > 5)) {
+            throw BizException.badRequest("评价必须是 1~5 星");
+        }
         int rows = taskMapper.confirm(taskId, userId);
         if (rows == 0) {
             throw BizException.of(ResultCode.TASK_STATUS_INVALID);
